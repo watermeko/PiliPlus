@@ -69,6 +69,7 @@ jobs:
           if [ -z "$VER" ]; then VER=stable; fi
           git clone --depth 1 -b "$VER" https://github.com/flutter/flutter.git "$HOME/flutter-sdk"
           echo "$HOME/flutter-sdk/bin" >> "$GITHUB_PATH"
+          echo "FLUTTER_ROOT=$HOME/flutter-sdk" >> "$GITHUB_ENV"
           export PATH="$HOME/flutter-sdk/bin:$PATH"
           flutter config --no-analytics >/dev/null || true
           flutter --version
