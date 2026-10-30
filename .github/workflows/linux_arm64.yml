@@ -1,0 +1,130 @@
+name: Build Linux arm64 deb
+
+on:
+  schedule:
+    # 每 6 小时检查一次上游新版本
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '上游 tag（留空=自动取最新 release）'
+        required: false
+        default: ''
+      force:
+        description: '已有同名 release 也强制重建'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pilplus-arm64
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build arm64 deb
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: 解析上游版本
+        id: rel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            TAG=$(curl -fsSL https://api.github.com/repos/bggRGjQaUbCoE/PiliPlus/releases/latest | jq -r .tag_name)
+          fi
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then echo "无法确定上游 tag"; exit 1; fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event.inputs.force }}" != "true" ] && gh release view "arm64-$TAG" >/dev/null 2>&1; then
+            echo "release arm64-$TAG 已存在，跳过"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 迁出上游源码
+        if: steps.rel.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: bggRGjQaUbCoE/PiliPlus
+          ref: ${{ steps.rel.outputs.tag }}
+          fetch-depth: 0
+
+      - name: 安装依赖
+        if: steps.rel.outputs.skip != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libasound2-dev libmpv-dev jq
+
+      - name: 安装 Flutter
+        if: steps.rel.outputs.skip != 'true'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version-file: pubspec.yaml
+          cache: true
+
+      - name: 写入版本与补丁
+        if: steps.rel.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          lib/scripts/build.ps1
+          lib/scripts/patch.ps1 Linux
+
+      - name: 构建 Linux arm64
+        if: steps.rel.outputs.skip != 'true'
+        run: flutter build linux --release --dart-define-from-file=pili_release.json --no-pub
+
+      - name: 打包 deb（arm64）
+        if: steps.rel.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          VER="${version:?version 未设置}"
+          DIR="PiliPlus_linux_${VER}_arm64"
+          rm -rf "$DIR"
+          mkdir -p "$DIR/opt/PiliPlus" "$DIR/usr/share/applications" "$DIR/usr/share/icons/hicolor/512x512/apps"
+          cp -r build/linux/arm64/release/bundle/* "$DIR/opt/PiliPlus"
+          cp -r assets/linux/DEBIAN "$DIR/DEBIAN"
+          cp assets/linux/com.example.piliplus.desktop "$DIR/usr/share/applications"
+          cp assets/images/logo/logo.png "$DIR/usr/share/icons/hicolor/512x512/apps/piliplus.png"
+
+          sed -i "2s/version_need_change/${VER}/" "$DIR/DEBIAN/control"
+          sed -i "s/^Architecture: amd64/Architecture: arm64/" "$DIR/DEBIAN/control"
+
+          SIZE_KB=$(du -s -b --apparent-size "$DIR" | awk '{print int($1)}')
+          SIZE_KB=$(( SIZE_KB - $(du -s -b --apparent-size "$DIR/DEBIAN" | awk '{print int($1)}') ))
+          SIZE_KB=$(awk "BEGIN{print int($SIZE_KB/1024 + 0.999)}")
+          sed -i "9s/size_need_change/${SIZE_KB}/" "$DIR/DEBIAN/control"
+
+          pushd "$DIR" >/dev/null
+          : > DEBIAN/md5sums
+          md5sum opt/PiliPlus/piliplus >> DEBIAN/md5sums
+          md5sum opt/PiliPlus/lib/* >> DEBIAN/md5sums
+          md5sum opt/PiliPlus/data/icudtl.dat >> DEBIAN/md5sums
+          chmod 0644 DEBIAN/control DEBIAN/md5sums
+          for f in postinst postrm prerm preinst; do [ -f "DEBIAN/$f" ] && chmod 0755 "DEBIAN/$f"; done
+          popd >/dev/null
+
+          dpkg-deb --build --verbose --root-owner-group "$DIR"
+          ls -lh "PiliPlus_linux_${VER}_arm64.deb"
+
+      - name: 发布 Release
+        if: steps.rel.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VER="${version:?}"
+          TAG="arm64-${{ steps.rel.outputs.tag }}"
+          gh release create "$TAG" "PiliPlus_linux_${VER}_arm64.deb" \
+            --title "PiliPlus ${VER} (arm64)" \
+            --notes "上游 ${{ steps.rel.outputs.tag }} 的 arm64 自动构建。
+
+          - 由 watermeko/PiliPlus 的 GitHub Actions 从上游 tag 源码构建
+          - 仅打包 .deb（arm64），未修改上游代码
+          - 上游仓库：https://github.com/bggRGjQaUbCoE/PiliPlus" \
+            --latest=false || gh release upload "$TAG" "PiliPlus_linux_${VER}_arm64.deb" --clobber
