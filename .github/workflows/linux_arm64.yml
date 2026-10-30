@@ -60,13 +60,19 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libasound2-dev libmpv-dev jq
 
-      - name: 安装 Flutter
+      - name: 安装 Flutter（arm64 从源码引导）
         if: steps.rel.outputs.skip != 'true'
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          flutter-version-file: pubspec.yaml
-          cache: true
+        run: |
+          set -euo pipefail
+          VER=$(awk '/^environment:/{f=1} f && /^[[:space:]]+flutter:/{print $2; exit}' pubspec.yaml)
+          echo "pubspec 指定 Flutter: $VER"
+          if [ -z "$VER" ]; then VER=stable; fi
+          git clone --depth 1 -b "$VER" https://github.com/flutter/flutter.git "$HOME/flutter-sdk"
+          echo "$HOME/flutter-sdk/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/flutter-sdk/bin:$PATH"
+          flutter config --no-analytics >/dev/null || true
+          flutter --version
+          flutter precache --linux
 
       - name: 写入版本与补丁
         if: steps.rel.outputs.skip != 'true'
