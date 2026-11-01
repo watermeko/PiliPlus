@@ -91,19 +91,17 @@ jobs:
         if: steps.rel.outputs.skip != 'true'
         run: |
           python3 - <<'PYEOF'
-          import re, pathlib
+          import pathlib
           f = pathlib.Path('lib/utils/theme_utils.dart')
           s = f.read_text(encoding='utf-8')
           if "Noto Sans CJK SC" in s:
               print('已打过补丁，跳过')
               raise SystemExit(0)
-          old = "      useMaterial3: true,\n"
-          new = ("      useMaterial3: true,\n"
-                 "      fontFamily: 'Noto Sans CJK SC',\n"
-                 "      fontFamilyFallback: ['Noto Sans', 'Noto Color Emoji'],\n")
+          old = "    final fontFamily = FontUtils.fontFamily;"
+          new = "    final fontFamily = FontUtils.fontFamily ?? 'Noto Sans CJK SC';"
           assert old in s, 'theme_utils.dart 结构变了，补丁需更新'
           f.write_text(s.replace(old, new, 1), encoding='utf-8')
-          print('字体补丁已应用')
+          print('字体补丁已应用：默认字体兜底为 Noto Sans CJK SC')
           PYEOF
 
       - name: 构建 Linux arm64
