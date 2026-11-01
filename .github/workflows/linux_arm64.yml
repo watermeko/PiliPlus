@@ -87,6 +87,25 @@ jobs:
           lib/scripts/build.ps1
           lib/scripts/patch.ps1 Linux
 
+      - name: 打中文字体补丁（Linux CJK 回退修复）
+        if: steps.rel.outputs.skip != 'true'
+        run: |
+          python3 - <<'PYEOF'
+          import re, pathlib
+          f = pathlib.Path('lib/utils/theme_utils.dart')
+          s = f.read_text(encoding='utf-8')
+          if "Noto Sans CJK SC" in s:
+              print('已打过补丁，跳过')
+              raise SystemExit(0)
+          old = "      useMaterial3: true,\n"
+          new = ("      useMaterial3: true,\n"
+                 "      fontFamily: 'Noto Sans CJK SC',\n"
+                 "      fontFamilyFallback: ['Noto Sans', 'Noto Color Emoji'],\n")
+          assert old in s, 'theme_utils.dart 结构变了，补丁需更新'
+          f.write_text(s.replace(old, new, 1), encoding='utf-8')
+          print('字体补丁已应用')
+          PYEOF
+
       - name: 构建 Linux arm64
         if: steps.rel.outputs.skip != 'true'
         run: flutter build linux --release --dart-define-from-file=pili_release.json --no-pub
@@ -101,6 +120,8 @@ jobs:
           mkdir -p "$DIR/opt/PiliPlus" "$DIR/usr/share/applications" "$DIR/usr/share/icons/hicolor/512x512/apps"
           cp -r build/linux/arm64/release/bundle/* "$DIR/opt/PiliPlus"
           cp -r assets/linux/DEBIAN "$DIR/DEBIAN"
+          # 运行时还需要 webkit2gtk，上游 control 没声明
+          sed -i 's/^         libmpv2,$/         libmpv2,\n         libwebkit2gtk-4.1-0,/' "$DIR/DEBIAN/control"
           cp assets/linux/com.example.piliplus.desktop "$DIR/usr/share/applications"
           cp assets/images/logo/logo.png "$DIR/usr/share/icons/hicolor/512x512/apps/piliplus.png"
 
