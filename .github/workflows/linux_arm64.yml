@@ -39,6 +39,11 @@ jobs:
           fi
           if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then echo "无法确定上游 tag"; exit 1; fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # 取上游 release 正文，作为本仓库 release 的描述
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/bggRGjQaUbCoE/PiliPlus/releases/tags/$TAG" \
+            | jq -r '.body // ""' > "$RUNNER_TEMP/upstream-notes.md"
+          echo "上游正文 $(wc -c < "$RUNNER_TEMP/upstream-notes.md") 字节"
           if [ "${{ github.event.inputs.force }}" != "true" ] && gh release view "arm64-$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "release arm64-$TAG 已存在，跳过"
             echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -127,11 +132,14 @@ jobs:
           set -euo pipefail
           VER="${version:?}"
           TAG="arm64-${{ steps.rel.outputs.tag }}"
+          {
+            cat "$RUNNER_TEMP/upstream-notes.md"
+            printf '\n\n---\n\n> **arm64 构建**：由 [watermeko/PiliPlus](https://github.com/watermeko/PiliPlus) 的 GitHub Actions 从上游 `%s` 源码构建，仅打包 `.deb`（arm64），未修改上游代码。\n' "${{ steps.rel.outputs.tag }}"
+          } > "$RUNNER_TEMP/notes.md"
           gh release create "$TAG" -R "$GITHUB_REPOSITORY" "PiliPlus_linux_${VER}_arm64.deb" \
             --title "PiliPlus ${VER} (arm64)" \
-            --notes "上游 ${{ steps.rel.outputs.tag }} 的 arm64 自动构建。
-
-          - 由 watermeko/PiliPlus 的 GitHub Actions 从上游 tag 源码构建
-          - 仅打包 .deb（arm64），未修改上游代码
-          - 上游仓库：https://github.com/bggRGjQaUbCoE/PiliPlus" \
-            --latest=false || gh release upload "$TAG" -R "$GITHUB_REPOSITORY" "PiliPlus_linux_${VER}_arm64.deb" --clobber
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            --latest=false || {
+              gh release upload "$TAG" -R "$GITHUB_REPOSITORY" "PiliPlus_linux_${VER}_arm64.deb" --clobber
+              gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/notes.md"
+            }
