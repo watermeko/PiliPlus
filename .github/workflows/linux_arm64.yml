@@ -92,16 +92,39 @@ jobs:
         run: |
           python3 - <<'PYEOF'
           import pathlib
+
+          FONT = 'Noto Sans CJK SC'
+
+          # 1) 主题默认字体兜底
           f = pathlib.Path('lib/utils/theme_utils.dart')
           s = f.read_text(encoding='utf-8')
-          if "Noto Sans CJK SC" in s:
-              print('已打过补丁，跳过')
-              raise SystemExit(0)
           old = "    final fontFamily = FontUtils.fontFamily;"
-          new = "    final fontFamily = FontUtils.fontFamily ?? 'Noto Sans CJK SC';"
-          assert old in s, 'theme_utils.dart 结构变了，补丁需更新'
-          f.write_text(s.replace(old, new, 1), encoding='utf-8')
-          print('字体补丁已应用：默认字体兜底为 Noto Sans CJK SC')
+          new = f"    final fontFamily = FontUtils.fontFamily ?? '{FONT}';"
+          if old in s:
+              f.write_text(s.replace(old, new, 1), encoding='utf-8')
+              print('theme_utils: 已兜底默认字体')
+          else:
+              print('theme_utils: 跳过（已打过或结构变化）')
+
+          # 2) 进度条章节标题用 ParagraphBuilder 直接画，需要显式字体
+          g = pathlib.Path('lib/common/widgets/progress_bar/segment_progress_bar.dart')
+          t = g.read_text(encoding='utf-8')
+          if FONT in t:
+              print('segment_progress_bar: 已打过，跳过')
+          else:
+              a = "            ui.ParagraphStyle(\n              textDirection: .ltr,"
+              b = ("            ui.ParagraphStyle(\n"
+                   "              textDirection: .ltr,\n"
+                   f"              fontFamily: '{FONT}',")
+              assert a in t, 'ParagraphStyle 结构变化'
+              t = t.replace(a, b, 1)
+              c = "          ..pushStyle(.new(color: Colors.white, fontSize: size, height: 1))"
+              d = ("          ..pushStyle(.new(color: Colors.white, fontSize: size, height: 1,"
+                   f" fontFamily: '{FONT}'))")
+              assert c in t, 'pushStyle 结构变化'
+              t = t.replace(c, d, 1)
+              g.write_text(t, encoding='utf-8')
+              print('segment_progress_bar: 已加字体')
           PYEOF
 
       - name: 构建 Linux arm64
